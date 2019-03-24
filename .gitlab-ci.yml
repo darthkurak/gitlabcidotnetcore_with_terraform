@@ -1,0 +1,106 @@
+.dotnet:
+  image: microsoft/dotnet:latest
+  before_script: 
+    - cd HelloWorld.App
+    - dotnet restore --packages ./.nuget/
+  only:
+    changes:
+      - HelloWorld.App/**/*
+      - .gitlab-ci.yml
+    refs:
+      - merge_requests
+      - master
+      - web
+  cache:
+    key: ${CI_COMMIT_REF_SLUG}
+    paths:
+      - HelloWorld.App/.nuget/
+
+.terraform:
+  variables:
+    TERRAFORM_WORKSPACE: 'dev'
+  image:
+    name: hashicorp/terraform:light
+    entrypoint:
+      - '/usr/bin/env'
+      - 'PATH=/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin'
+  before_script:
+    - cd terraform
+    - terraform init
+    - terraform workspace select $TERRAFORM_WORKSPACE || terraform workspace new $TERRAFORM_WORKSPACE
+  cache:
+    key: terraform
+    paths:
+      - terraform/.terraform
+  only:
+     changes:
+       - terraform/**/*
+       - .gitlab-ci.yml
+     refs:
+      - master
+      - web
+
+stages:
+  - build
+  - test
+  - package
+  - terraform_plan
+  - terraform_apply
+
+build:
+  extends: .dotnet
+  stage: build
+  script:
+    - dotnet build --no-restore
+
+test:
+  extends: .dotnet
+  stage: test
+  script:
+    - dotnet test --no-restore
+
+package:
+  extends: .dotnet 
+  stage: package
+  script:
+    - dotnet publish HelloWorld.App -c Release -o ../artifacts/HelloWorld.App --no-restore
+  artifacts:
+    name: "HelloWorld.App"
+    paths:
+      - HelloWorld.App/artifacts/HelloWorld.App
+    expire_in: 1 year
+  only:
+    refs:
+      - master
+      - web
+
+terraform_validate:
+  extends: .terraform
+  stage: build
+  script:
+    - terraform validate
+  only:
+    refs:
+      - master
+      - merge_requests
+      - web
+
+terraform_plan:
+  extends: .terraform
+  stage: terraform_plan
+  script:
+    - terraform plan -out=plan.data
+  artifacts:
+    name: "terraform_plan"
+    paths:
+      - terraform/plan.data
+    expire_in: 1 year
+
+terraform_apply:
+  extends: .terraform
+  stage: terraform_apply
+  script:
+    - terraform apply plan.data
+  environment:
+    name: $TERRAFORM_WORKSPACE
+  when: manual
